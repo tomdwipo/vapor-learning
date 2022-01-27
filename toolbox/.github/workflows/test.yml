@@ -1,0 +1,73 @@
+name: test
+on: { pull_request: {} }
+
+jobs:
+  getcidata:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.output.outputs.environments }}
+    steps:
+      - id: output
+        run: |
+          envblob="$(curl -fsSL https://raw.githubusercontent.com/vapor/ci/main/pr-environments.json | jq -cMj '.')"
+          echo "::set-output name=environments::${envblob}"
+    
+  test-new:
+    needs: getcidata
+    strategy:
+      fail-fast: false
+      # TODO: This produces 40 checks, that's too many
+      matrix:
+        fluentflags:
+          - --no-fluent
+          - --fluent.db mysql
+          - --fluent.db postgres
+          - --fluent.db sqlite
+          - --fluent.db mongo
+        leafflags:
+          - --leaf
+          - --no-leaf
+        env: ${{ fromJSON(needs.getcidata.outputs.environments) }}
+    runs-on: ${{ matrix.env.os }}
+    container: ${{ matrix.env.image }}
+    steps:
+      - name: Select toolchain
+        uses: maxim-lobanov/setup-xcode@v1.2.1
+        with:
+          xcode-version: ${{ matrix.env.toolchain }}
+        if: ${{ matrix.env.toolchain != '' }}
+      - name: Install SQLite if needed
+        if: ${{ contains(matrix.fluentflags, 'sqlite') && matrix.env.image != '' }}
+        run: apt-get -q update && apt-get -q install -y libsqlite3-dev
+      - name: Check out toolbox
+        uses: actions/checkout@v2
+      - name: Build toolbox
+        run: swift build --enable-test-discovery -c debug
+      - name: Execute new project command
+        run: |
+          swift run --enable-test-discovery \
+            vapor new toolbox-test \
+                --no-commit -o /tmp/toolbox-test \
+                ${{ matrix.fluentflags }} ${{ matrix.leafflags }}
+      - name: Test new project
+        run: swift test --package-path /tmp/toolbox-test --enable-test-discovery
+  
+  test-toolbox:
+    needs: getcidata
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.getcidata.outputs.environments) }}
+    runs-on: ${{ matrix.env.os }}
+    container: ${{ matrix.env.image }}
+    steps:
+      - name: Select toolchain
+        uses: maxim-lobanov/setup-xcode@v1.2.1
+        with:
+          xcode-version: ${{ matrix.env.toolchain }}
+        if: ${{ matrix.env.toolchain != '' }}
+      - name: Check out toolbox
+        uses: actions/checkout@v2
+      - name: Run tests with Thread Sanitizer
+        timeout-minutes: 20
+        run: swift test --enable-test-discovery --sanitize=thread
