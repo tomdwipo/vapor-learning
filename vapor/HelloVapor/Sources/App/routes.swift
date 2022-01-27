@@ -22,4 +22,16 @@ func routes(_ app: Application) throws {
         }
         return "Hello, \(name)!"
     }
+    
+    app.post("info") { req -> String in
+        let data = try req.content.decode(InfoData.self)
+        return "Hello \(data.name)"
+    }
+    
+    app.post("info-json") { req -> InfoResponse in
+        let data = try req.content.decode(InfoData.self)
+        return InfoResponse(request: data)
+    }
 }
+
+
